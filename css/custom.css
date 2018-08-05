@@ -1,0 +1,48 @@
+#productwithimage-standard_cart {
+	width: 100px; 
+	float: left;
+	margin-right: 10px;
+}
+#productimage-standard_cart {
+	border-radius: 5px; 
+	margin: 10px; 
+	box-shadow: 2px 2px 4px 1px 
+	#ccc
+}
+#order-pwi-standard_cart .panel-addon {
+    font-size: 0.8em;
+    text-align: center;
+}
+#order-pwi-standard_cart .panel-addon:hover {
+    cursor: pointer;
+}
+#order-pwi-standard_cart .panel-addon .panel-body {
+    border-radius: 4px;
+}
+#order-pwi-standard_cart .panel-addon .panel-body label {
+    font-size: 1em;
+    font-weight: bold;
+    color: #333;
+}
+#order-pwi-standard_cart .panel-addon .panel-price {
+    padding: 4px;
+    background-color: #e8e8e8;
+}
+#order-pwi-standard_cart .panel-addon .panel-add {
+    display: block;
+    padding: 4px;
+    background-color: #5cb85c;
+    color: #fff;
+    border-radius: 0 0 4px 4px;
+}
+#order-pwi-standard_cart .panel-addon-selected {
+    border-color: #5cb85c;
+}
+#order-pwi-standard_cart .panel-addon-selected .panel-price {
+    background-color: #5cb85c;
+    color: #fff;
+}
+#order-pwi-standard_cart .panel-addon-selected .panel-add {
+    background-color: #ebccd1;
+    color: #a94442;
+}
