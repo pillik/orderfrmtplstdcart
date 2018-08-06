@@ -13,6 +13,9 @@ if (typeof localTrans === 'undefined') {
     }
 }
 
+var domainLookupCallCount,
+    furtherSuggestions;
+
 jQuery(document).ready(function(){
 
     jQuery('#order-standard_cart').find('input').iCheck({
@@ -130,35 +133,325 @@ jQuery(document).ready(function(){
         jQuery("#domain" + jQuery(this).val()).show();
     });
 
-    jQuery(".domain-selection-options .option").click(function(e) {
-        jQuery(this).find('input').iCheck('check');
-    });
-
-    jQuery('#frmProductDomain button[type="submit"]').click(function(e) {
+    jQuery('#frmProductDomain').submit(function (e) {
         e.preventDefault();
-        var btnSearchObj = jQuery(this);
-        var preSearchText = btnSearchObj.html();
-        jQuery(this).html('<i class="fa fa-spinner fa-spin"></i> ' + preSearchText);
-        jQuery("#domainSearchResults").hide();
-        jQuery("#domainLoadingSpinner").show();
-        var domainoption = jQuery(".domain-selection-options input:checked").val();
-        var sld = jQuery("#"+domainoption+"sld").val();
-        var tld = '';
-        if (domainoption=='incart') {
-            var sld = jQuery("#"+domainoption+"sld option:selected").text();
-        } else if (domainoption=='subdomain') {
-            var tld = jQuery("#"+domainoption+"tld option:selected").text();
+
+        var btnSearchObj = jQuery(this).find('button[type="submit"]'),
+            domainSearchResults = jQuery("#DomainSearchResults"),
+            spotlightTlds = jQuery('#spotlightTlds'),
+            suggestions = jQuery('#domainSuggestions'),
+            btnDomainContinue = jQuery('#btnDomainContinue'),
+            domainoption = jQuery(".domain-selection-options input:checked").val(),
+            sldInput = jQuery("#" + domainoption + "sld"),
+            sld = sldInput.val(),
+            tld = '',
+            pid = jQuery('#frmProductDomainPid').val(),
+            tldInput = '';
+
+        if (domainoption == 'incart') {
+            sldInput = jQuery("#" + domainoption + "sld option:selected");
+            sld = sldInput.text();
+        } else if (domainoption == 'subdomain') {
+            tldInput = jQuery("#" + domainoption + "tld option:selected");
+            tld = tldInput.text();
         } else {
-            var tld = jQuery("#"+domainoption+"tld").val();
-        }
-        jQuery.post("cart.php", { ajax: 1, a: "domainoptions", sld: sld, tld: tld, checktype: domainoption },
-            function(data) {
-                jQuery("#domainLoadingSpinner").hide();
-                jQuery("#domainSearchResults").html(data);
-                jQuery("#domainSearchResults").slideDown();
-                btnSearchObj.html(preSearchText);
+            tldInput = jQuery("#" + domainoption + "tld");
+            tld = tldInput.val();
+            if (sld && !tld) {
+                tldInput.tooltip('show');
+                tldInput.focus();
+                return false;
             }
-        );
+            if (tld.substr(0, 1) != '.') {
+                tld = '.' + tld;
+            }
+        }
+        if (!sld) {
+            sldInput.tooltip('show');
+            sldInput.focus();
+            return false;
+        }
+
+        sldInput.tooltip('hide');
+        if (tldInput.length) {
+            tldInput.tooltip('hide');
+        }
+
+        jQuery('input[name="domainoption"]').iCheck('disable');
+        domainLookupCallCount = 0;
+        btnSearchObj.attr('disabled', 'disabled').addClass('disabled');
+
+        jQuery('.domain-lookup-result').addClass('hidden');
+        jQuery('#primaryLookupResult div').hide();
+        jQuery('#primaryLookupResult').find('.register-price-label').show().end()
+            .find('.transfer-price-label').addClass('hidden');
+
+        jQuery('.domain-lookup-register-loader').hide();
+        jQuery('.domain-lookup-transfer-loader').hide();
+        jQuery('.domain-lookup-other-loader').hide();
+        if (domainoption == 'register') {
+            jQuery('.domain-lookup-register-loader').show();
+        } else if (domainoption == 'transfer') {
+            jQuery('.domain-lookup-transfer-loader').show();
+        } else {
+            jQuery('.domain-lookup-other-loader').show();
+        }
+
+        jQuery('.domain-lookup-loader').show();
+        suggestions.find('li').addClass('hidden').end()
+            .find('.clone').remove().end();
+        jQuery('div.panel-footer.more-suggestions').addClass('hidden')
+            .find('a').removeClass('hidden').end()
+            .find('span.no-more').addClass('hidden');
+        jQuery('.btn-add-to-cart').removeAttr('disabled')
+            .find('span').hide().end()
+            .find('span.to-add').show();
+        btnDomainContinue.addClass('hidden').attr('disabled', 'disabled');
+
+        if (domainoption != 'register') {
+            spotlightTlds.hide();
+            jQuery('.suggested-domains').hide();
+        }
+
+        if (!domainSearchResults.is(":visible")) {
+            domainSearchResults.hide().removeClass('hidden').fadeIn();
+        }
+
+        if (domainoption == 'register') {
+            jQuery('.suggested-domains').hide().removeClass('hidden').fadeIn('fast');
+            spotlightTlds.hide().removeClass('hidden').fadeIn('fast');
+            jQuery('#resultDomainOption').val(domainoption);
+            var lookup = jQuery.post(
+                    'cart.php',
+                    {
+                        token: csrfToken,
+                        a: 'checkDomain',
+                        type: 'domain',
+                        domain: sld + tld
+                    },
+                    'json'
+                ),
+                spotlight = jQuery.post(
+                    'cart.php',
+                    {
+                        token: csrfToken,
+                        a: 'checkDomain',
+                        type: 'spotlight',
+                        domain: sld + tld
+                    },
+                    'json'
+                ),
+                suggestion = jQuery.post(
+                    'cart.php',
+                    {
+                        token: csrfToken,
+                        a: 'checkDomain',
+                        type: 'suggestions',
+                        domain: sld + tld
+                    },
+                    'json'
+                );
+
+            // primary lookup handler
+            lookup.done(function (data) {
+                jQuery.each(data.result, function(index, domain) {
+                    var pricing = domain.pricing,
+                        result = jQuery('#primaryLookupResult'),
+                        available = result.find('.domain-available'),
+                        availablePrice = result.find('.domain-price'),
+                        unavailable = result.find('.domain-unavailable'),
+                        invalid= result.find('.domain-invalid'),
+                        resultDomain = jQuery('#resultDomain'),
+                        resultDomainPricing = jQuery('#resultDomainPricingTerm');
+                    result.removeClass('hidden').show();
+                    jQuery('.domain-lookup-primary-loader').hide();
+                    if (domain.isValidDomain) {
+                        unavailable.hide();
+                        invalid.hide();
+                        if (domain.isAvailable) {
+                            if (domain.preferredTLDNotAvailable) {
+                                unavailable.show().find('strong').html(domain.originalUnavailableDomain);
+                            }
+                            available.show().find('strong').html(domain.domainName);
+                            availablePrice.show().find('span.price').html(pricing[Object.keys(pricing)[0]].register).end()
+                                .find('button').attr('data-domain', domain.idnDomainName);
+                            resultDomain.val(domain.domainName);
+                            resultDomainPricing.val(Object.keys(pricing)[0]).attr('name', 'domainsregperiod[' + domain.domainName +']');
+                            btnDomainContinue.removeAttr('disabled');
+                        } else {
+                            unavailable.show().find('strong').html(domain.domainName);
+                        }
+                    } else {
+                        var invalidLength = invalid.find('span.domain-length-restrictions');
+                        invalidLength.hide();
+                        if (domain.minLength > 0 && domain.maxLength > 0) {
+                            invalidLength.find('.min-length').html(domain.minLength).end()
+                                .find('.max-length').html(domain.maxLength).end();
+                            invalidLength.show();
+                        }
+                        invalid.show();
+                    }
+
+                });
+            }).always(function() {
+                hasProductDomainLookupEnded(3, btnSearchObj);
+            });
+
+            // spotlight lookup handler
+            spotlight.done(function(data) {
+                if (typeof data != 'object' || data.result.length == 0) {
+                    jQuery('.domain-lookup-spotlight-loader').hide();
+                    return;
+                }
+                jQuery.each(data.result, function(index, domain) {
+                    var tld = domain.tldNoDots,
+                        pricing = domain.pricing,
+                        result = jQuery('#spotlight' + tld + ' .domain-lookup-result');
+                    jQuery('.domain-lookup-spotlight-loader').hide();
+                    if (domain.isValidDomain) {
+                        if (domain.isAvailable) {
+                            result.find('button.unavailable').addClass('hidden').end()
+                                .find('span.available').html(pricing[Object.keys(pricing)[0]].register).removeClass('hidden').end()
+                                .find('button').not('button.unavailable')
+                                .attr('data-domain', domain.idnDomainName)
+                                .removeClass('hidden');
+                        } else {
+                            result.find('button.unavailable.hidden').removeClass('hidden').end()
+                                .find('span.available').addClass('hidden').end()
+                                .find('button').not('button.unavailable').addClass('hidden');
+                        }
+                    } else {
+                        result.find('button.invalid.hidden').removeClass('hidden').end()
+                            .find('span.available').addClass('hidden').end()
+                            .find('button').not('button.invalid').addClass('hidden');
+                    }
+
+                    result.removeClass('hidden');
+                });
+            }).always(function() {
+                hasProductDomainLookupEnded(3, btnSearchObj);
+            });
+
+            // suggestions lookup handler
+            suggestion.done(function (data) {
+                if (typeof data != 'object' || data.result.length == 0) {
+                    jQuery('.suggested-domains').fadeOut('fast', function() {
+                        jQuery(this).addClass('hidden');
+                    });
+                    return;
+                } else {
+                    jQuery('.suggested-domains').removeClass('hidden');
+                }
+                var suggestionCount = 1;
+                jQuery.each(data.result, function(index, domain) {
+                    var tld = domain.tld,
+                        pricing = domain.pricing;
+                    suggestions.find('li:first').clone(true, true).appendTo(suggestions);
+                    var newSuggestion = suggestions.find('li.domain-suggestion').last();
+                    newSuggestion.addClass('clone')
+                        .find('span.domain').html(domain.sld).end()
+                        .find('span.extension').html('.' + tld).end()
+                        .find('button').attr('data-domain', domain.idnDomainName).end()
+                        .find('span.price').html(pricing[Object.keys(pricing)[0]].register).end();
+                    if (suggestionCount <= 10) {
+                        newSuggestion.removeClass('hidden');
+                    }
+                    suggestionCount++;
+                    if (domain.group) {
+                        newSuggestion.find('span.promo')
+                            .addClass(domain.group)
+                            .html(domain.group.toUpperCase())
+                            .removeClass('hidden')
+                            .end();
+                    }
+                    furtherSuggestions = suggestions.find('li.domain-suggestion.clone.hidden').length;
+                    if (furtherSuggestions > 0) {
+                        jQuery('div.more-suggestions').removeClass('hidden');
+                    }
+                });
+                jQuery('.domain-lookup-suggestions-loader').hide();
+                jQuery('#domainSuggestions').removeClass('hidden');
+            }).always(function() {
+                hasProductDomainLookupEnded(3, btnSearchObj);
+            });
+        } else if (domainoption == 'transfer') {
+            jQuery('#resultDomainOption').val(domainoption);
+            var transfer = jQuery.post(
+                'cart.php',
+                {
+                    token: csrfToken,
+                    a: 'checkDomain',
+                    type: 'transfer',
+                    domain: sld + tld
+                },
+                'json'
+            );
+
+            transfer.done(function (data) {
+                if (typeof data != 'object' || data.result.length == 0) {
+                    jQuery('.domain-lookup-primary-loader').hide();
+                    return;
+                }
+                jQuery.each(data.result, function(index, domain) {
+                    var pricing = domain.pricing,
+                        result = jQuery('#primaryLookupResult'),
+                        transfereligible = result.find('.transfer-eligible'),
+                        transferPrice = result.find('.domain-price'),
+                        transfernoteligible = result.find('.transfer-not-eligible'),
+                        resultDomain = jQuery('#resultDomain'),
+                        resultDomainPricing = jQuery('#resultDomainPricingTerm');
+                    jQuery('.domain-lookup-primary-loader').hide();
+                    result.removeClass('hidden').show();
+                    if (domain.isRegistered) {
+                        transfereligible.show();
+                        transferPrice.show().find('.register-price-label').hide().end()
+                            .find('.transfer-price-label').removeClass('hidden').show().end()
+                            .find('span.price').html(pricing[Object.keys(pricing)[0]].transfer).end()
+                            .find('button').attr('data-domain', domain.idnDomainName);
+                        resultDomain.val(domain.domainName);
+                        resultDomainPricing.val(Object.keys(pricing)[0]).attr('name', 'domainsregperiod[' + domain.domainName +']');
+                        btnDomainContinue.removeAttr('disabled');
+                    } else {
+                        transfernoteligible.show();
+                    }
+                });
+            }).always(function() {
+                hasProductDomainLookupEnded(1, btnSearchObj);
+            });
+        } else if (domainoption == 'owndomain' || domainoption == 'subdomain' || domainoption == 'incart') {
+
+            var otherDomain = jQuery.post(
+                'cart.php',
+                {
+                    token: csrfToken,
+                    a: 'checkDomain',
+                    type: domainoption,
+                    pid: pid,
+                    domain: sld + tld
+                },
+                'json'
+            );
+
+            otherDomain.done(function(data) {
+                if (typeof data != 'object' || data.result.length == 0) {
+                    jQuery('.domain-lookup-subdomain-loader').hide();
+                    return;
+                }
+                jQuery.each(data.result, function(index, result) {
+                    if (result.status === true) {
+                        window.location = 'cart.php?a=confproduct&i=' + result.num;
+                    } else {
+                        jQuery('.domain-lookup-primary-loader').hide();
+                        jQuery('#primaryLookupResult').removeClass('hidden').show().find('.domain-invalid').show();
+                    }
+                });
+
+            }).always(function(){
+                hasProductDomainLookupEnded(1, btnSearchObj);
+            });
+        }
+
+        btnDomainContinue.removeClass('hidden');
     });
 
     jQuery("#btnAlreadyRegistered").click(function() {
@@ -238,19 +531,328 @@ jQuery(document).ready(function(){
         jQuery("#passwordStrengthMeterBar").removeClass('progress-bar-success progress-bar-warning progress-bar-danger').addClass('progress-bar-' + cssClass);
     });
 
-    jQuery("#btnCheckAvailability").click(function(e) {
+    jQuery('#inputDomain').on('shown.bs.tooltip', function () {
+        setTimeout(function(input) {
+            input.tooltip('hide');
+        },
+            5000,
+            jQuery(this)
+        );
+    });
+
+    jQuery('#frmDomainChecker').submit(function (e) {
         e.preventDefault();
-        var buttonContent = jQuery(this).html();
-        jQuery(this).html('<i class="fa fa-spinner fa-spin"></i> ' + buttonContent);
-        jQuery("#domainSearchResults").hide();
-        jQuery("#domainLoadingSpinner").show();
-        jQuery.post("cart.php", jQuery("#frmDomainSearch").serialize(),
-                function(data) {
-                    jQuery("#domainLoadingSpinner").hide();
-                    jQuery("#domainSearchResults").html(data).show();
-                    jQuery("#btnCheckAvailability").html(buttonContent);
-                }
+
+        var frmDomain = jQuery('#frmDomainChecker'),
+            inputDomain = jQuery('#inputDomain'),
+            suggestions = jQuery('#domainSuggestions'),
+            reCaptchaContainer = jQuery('#google-recaptcha'),
+            captcha = jQuery('#inputCaptcha');
+
+        domainLookupCallCount = 0;
+
+        // check a domain has been entered
+        if (!inputDomain.val()) {
+            inputDomain.tooltip('show');
+            inputDomain.focus();
+            return;
+        }
+
+        inputDomain.tooltip('hide');
+
+        if (jQuery('#captchaContainer').length) {
+            validate_captcha(frmDomain);
+            return;
+        }
+
+        reCaptchaContainer.tooltip('hide');
+        captcha.tooltip('hide');
+
+        // disable repeat submit and show loader
+        jQuery('#btnCheckAvailability').attr('disabled', 'disabled').addClass('disabled');
+        jQuery('.domain-lookup-result').addClass('hidden');
+        jQuery('.domain-lookup-loader').show();
+
+        // reset elements
+        suggestions.find('li').addClass('hidden').end();
+        suggestions.find('.clone').remove().end();
+        jQuery('div.panel-footer.more-suggestions').addClass('hidden')
+            .find('a').removeClass('hidden').end()
+            .find('span.no-more').addClass('hidden');
+        jQuery('.btn-add-to-cart').removeAttr('disabled')
+            .find('span').hide().end()
+            .find('span.to-add').show();
+        jQuery('.suggested-domains').hide().removeClass('hidden').fadeIn('fast');
+
+        // fade in results
+        if (!jQuery('#DomainSearchResults').is(":visible")) {
+            jQuery('#DomainSearchResults').hide().removeClass('hidden').fadeIn();
+        }
+
+        var lookup = jQuery.post(
+                frmDomain.attr('action'),
+                frmDomain.serialize() + '&type=domain',
+                'json'
+            ),
+            spotlight = jQuery.post(
+                frmDomain.attr('action'),
+                frmDomain.serialize() + '&type=spotlight',
+                'json'
+            ),
+            suggestion = jQuery.post(
+                frmDomain.attr('action'),
+                frmDomain.serialize() + '&type=suggestions',
+                'json'
             );
+
+        // primary lookup handler
+        lookup.done(function (data) {
+            if (typeof data != 'object' || data.result.length == 0) {
+                jQuery('.domain-lookup-primary-loader').hide();
+                return;
+            }
+            jQuery.each(data.result, function(index, domain) {
+                var pricing = domain.pricing,
+                    result = jQuery('#primaryLookupResult'),
+                    available = result.find('.domain-available'),
+                    availableprice = result.find('.domain-price'),
+                    unavailable = result.find('.domain-unavailable'),
+                    invalid = result.find('.domain-invalid');
+                jQuery('.domain-lookup-primary-loader').hide();
+                result.removeClass('hidden').show();
+                if (domain.isValidDomain) {
+                    unavailable.hide();
+                    invalid.hide();
+                    if (domain.isAvailable) {
+                        if (domain.preferredTLDNotAvailable) {
+                            unavailable.show().find('strong').html(domain.originalUnavailableDomain);
+                        }
+                        available.show().find('strong').html(domain.domainName);
+                        availableprice.show().find('span.price').html(pricing[Object.keys(pricing)[0]].register).end()
+                            .find('button').attr('data-domain', domain.idnDomainName);
+                    } else {
+                        available.hide();
+                        availableprice.hide();
+                        unavailable.show().find('strong').html(domain.domainName);
+                    }
+                } else {
+                    available.hide();
+                    availableprice.hide();
+                    unavailable.hide();
+                    var invalidLength = invalid.find('span.domain-length-restrictions');
+                    invalidLength.hide();
+                    if (domain.minLength > 0 && domain.maxLength > 0) {
+                        invalidLength.find('.min-length').html(domain.minLength).end()
+                            .find('.max-length').html(domain.maxLength).end();
+                        invalidLength.show();
+                    }
+                    invalid.show();
+                }
+            });
+        }).always(function() {
+            hasDomainLookupEnded();
+        });
+
+        // spotlight lookup handler
+        spotlight.done(function(data) {
+            if (typeof data != 'object' || data.result.length == 0) {
+                jQuery('.domain-lookup-spotlight-loader').hide();
+                return;
+            }
+            jQuery.each(data.result, function(index, domain) {
+                var tld = domain.tldNoDots,
+                    pricing = domain.pricing,
+                    result = jQuery('#spotlight' + tld + ' .domain-lookup-result');
+                jQuery('.domain-lookup-spotlight-loader').hide();
+                if (domain.isValidDomain) {
+                    if (domain.isAvailable) {
+                        result.find('button.unavailable').addClass('hidden').end()
+                            .find('button.invalid').addClass('hidden').end()
+                            .find('span.available').html(pricing[Object.keys(pricing)[0]].register).removeClass('hidden').end()
+                            .find('button').not('button.unavailable').not('button.invalid')
+                            .attr('data-domain', domain.idnDomainName)
+                            .removeClass('hidden');
+                    } else {
+                        result.find('button.unavailable.hidden').removeClass('hidden').end()
+                            .find('span.available').addClass('hidden').end()
+                            .find('button').not('button.unavailable').addClass('hidden');
+                    }
+                } else {
+                    result.find('button.invalid.hidden').removeClass('hidden').end()
+                        .find('span.available').addClass('hidden').end()
+                        .find('button').not('button.invalid').addClass('hidden');
+                }
+                result.removeClass('hidden');
+            });
+        }).always(function() {
+            hasDomainLookupEnded();
+        });
+
+        // suggestions lookup handler
+        suggestion.done(function (data) {
+            if (typeof data != 'object' || data.result.length == 0) {
+                jQuery('.suggested-domains').fadeOut('fast', function() {
+                    jQuery(this).addClass('hidden');
+                });
+                return;
+            } else {
+                jQuery('.suggested-domains').removeClass('hidden');
+            }
+            var suggestionCount = 1;
+            jQuery.each(data.result, function(index, domain) {
+                var tld = domain.tld,
+                    pricing = domain.pricing;
+                suggestions.find('li:first').clone(true, true).appendTo(suggestions);
+                var newSuggestion = suggestions.find('li.domain-suggestion').last();
+                newSuggestion.addClass('clone')
+                    .find('span.domain').html(domain.sld).end()
+                    .find('span.extension').html('.' + tld).end()
+                    .find('button').attr('data-domain', domain.idnDomainName).end()
+                    .find('span.price').html(pricing[Object.keys(pricing)[0]].register).end();
+                if (suggestionCount <= 10) {
+                    newSuggestion.removeClass('hidden');
+                }
+                suggestionCount++;
+                if (domain.group) {
+                    newSuggestion.find('span.promo')
+                        .addClass(domain.group)
+                        .html(domain.group.toUpperCase())
+                        .removeClass('hidden')
+                        .end();
+                }
+                furtherSuggestions = suggestions.find('li.domain-suggestion.clone.hidden').length;
+                if (furtherSuggestions > 0) {
+                    jQuery('div.more-suggestions').removeClass('hidden');
+                }
+            });
+            jQuery('.domain-lookup-suggestions-loader').hide();
+            jQuery('#domainSuggestions').removeClass('hidden');
+        }).always(function() {
+            hasDomainLookupEnded();
+        });
+    });
+
+    jQuery('.btn-add-to-cart').on('click', function() {
+        if (jQuery(this).hasClass('checkout')) {
+            window.location = 'cart.php?a=confdomains';
+            return;
+        }
+        var domain = jQuery(this).attr('data-domain'),
+            buttons = jQuery('button[data-domain="' + domain + '"]'),
+            whois = jQuery(this).attr('data-whois'),
+            isProductDomain = jQuery(this).hasClass('product-domain'),
+            btnDomainContinue = jQuery('#btnDomainContinue'),
+            resultDomain = jQuery('#resultDomain'),
+            resultDomainPricing = jQuery('#resultDomainPricingTerm');
+
+        buttons.attr('disabled', 'disabled');
+
+        var addToCart = jQuery.post(
+            window.location.pathname,
+            {
+                a: 'addToCart',
+                domain: domain,
+                token: csrfToken,
+                whois: whois
+            },
+            'json'
+        ).done(function (data) {
+            buttons.find('span.to-add').hide();
+            if (data.result == 'added') {
+                buttons.find('span.added').show().end();
+                if (!isProductDomain) {
+                    buttons.removeAttr('disabled').addClass('checkout');
+                }
+                if (resultDomain.length && !resultDomain.val()) {
+                    resultDomain.val(domain);
+                    resultDomainPricing.val(data.period).attr('name', 'domainsregperiod[' + domain +']');
+                    if (btnDomainContinue.length > 0 && btnDomainContinue.is(':disabled')) {
+                        btnDomainContinue.removeAttr('disabled');
+                    }
+                }
+                jQuery('#cartItemCount').html(data.cartCount);
+            } else {
+                buttons.find('span.unavailable').show();
+            }
+        });
+    });
+
+    jQuery('#frmDomainTransfer').submit(function (e) {
+        e.preventDefault();
+
+        var frmDomain = jQuery('#frmDomainTransfer'),
+        transferButton = jQuery('#btnTransferDomain'),
+            inputDomain = jQuery('#inputTransferDomain'),
+            authField = jQuery('#inputAuthCode'),
+            domain = inputDomain.val(),
+            authCode = authField.val(),
+            redirect = false,
+            reCaptchaContainer = jQuery('#google-recaptcha'),
+            captcha = jQuery('#inputCaptcha');
+
+        if (!domain) {
+            inputDomain.tooltip('show');
+            inputDomain.focus();
+            return false;
+        }
+
+        inputDomain.tooltip('hide');
+
+        if (jQuery('#captchaContainer').length) {
+            validate_captcha(frmDomain);
+            return;
+        }
+
+        reCaptchaContainer.tooltip('hide');
+        captcha.tooltip('hide');
+
+        transferButton.attr('disabled', 'disabled').addClass('disabled')
+            .find('span').hide().removeClass('hidden').end()
+            .find('.loader').show();
+
+        jQuery.post(
+            frmDomain.attr('action'),
+            frmDomain.serialize(),
+            'json'
+        ).done(function (data) {
+            if (typeof data != 'object') {
+                transferButton.find('span').hide().end()
+                    .find('#addToCart').show().end()
+                    .removeAttr('disabled').removeClass('disabled');
+                return false;
+            }
+            var result = data.result;
+
+            if (result == 'added') {
+                window.location = 'cart.php?a=confdomains';
+                redirect = true;
+            } else {
+                if (result.isRegistered == true) {
+                    if (result.epp == true && !authCode) {
+                        authField.tooltip('show');
+                        authField.focus();
+                    }
+                } else {
+                    jQuery('#transferUnavailable').html(result.unavailable)
+                        .hide().removeClass('hidden').fadeIn('fast', function() {
+                            setTimeout(function(input) {
+                                    input.fadeOut('fast');
+                                },
+                                3000,
+                                jQuery(this)
+                            );
+                        }
+                    );
+                }
+            }
+        }).always(function () {
+            if (redirect == false) {
+                transferButton.find('span').hide().end()
+                    .find('#addToCart').show().end()
+                    .removeAttr('disabled').removeClass('disabled');
+            }
+        });
+
     });
 
     jQuery("#btnEmptyCart").click(function() {
@@ -262,8 +864,22 @@ jQuery(document).ready(function(){
         jQuery("#selectedCardType").html(jQuery(this).html());
         jQuery("#cctype").val(jQuery('span.type', this).html());
     });
-
 });
+
+function hasDomainLookupEnded() {
+    domainLookupCallCount++;
+    if (domainLookupCallCount == 3) {
+        jQuery('#btnCheckAvailability').removeAttr('disabled').removeClass('disabled');
+    }
+}
+
+function hasProductDomainLookupEnded(total, button) {
+    domainLookupCallCount++;
+    if (domainLookupCallCount == total) {
+        button.removeAttr('disabled').removeClass('disabled');
+        jQuery('input[name="domainoption"]').iCheck('enable');
+    }
+}
 
 function domainGotoNextStep() {
     jQuery("#domainLoadingSpinner").show();
@@ -321,6 +937,126 @@ function selectDomainPricing(domainName, price, period, yearsString, suggestionN
     jQuery("[name='domainsregperiod[" + domainName + "]']").val(period);
     jQuery("[name='" + domainName + "-selected-price']").html('<b class="glyphicon glyphicon-shopping-cart"></b>'
         + ' ' + period + ' ' + yearsString + ' @ ' + price);
+}
+
+function selectDomainPeriodInCart(domainName, price, period, yearsString) {
+    var loader = jQuery("#orderSummaryLoader");
+    if (loader.hasClass('hidden')) {
+        loader.hide().removeClass('hidden').fadeIn('fast');
+    }
+    jQuery("[name='" + domainName + "Pricing']").html(period + ' ' + yearsString + ' <span class="caret"></span>');
+    jQuery("[name='" + domainName + "Price']").html(price);
+    var update = jQuery.post(
+        window.location.pathname,
+        {
+            domain: domainName,
+            period: period,
+            a: 'updateDomainPeriod',
+            token: csrfToken
+        }
+    );
+    update.done(
+        function(data) {
+            jQuery('#subtotal').html(data.subtotal);
+            if (data.promotype) {
+                jQuery('#discount').html(data.discount);
+            }
+            if (data.taxrate) {
+                jQuery('#taxTotal1').html(data.taxtotal);
+            }
+            if (data.taxrate2) {
+                jQuery('#taxTotal2').html(data.taxtotal2);
+            }
+
+            var recurringSpan = jQuery('#recurring');
+
+            recurringSpan.find('span:visible').not('span.cost').fadeOut('fast').end();
+
+            if (data.totalrecurringannually) {
+                jQuery('#recurringAnnually').fadeIn('fast').find('.cost').html(data.totalrecurringannually);
+            }
+
+            if (data.totalrecurringbiennially) {
+                jQuery('#recurringBiennially').fadeIn('fast').find('.cost').html(data.totalrecurringbiennially);
+            }
+
+            if (data.totalrecurringmonthly) {
+                jQuery('#recurringMonthly').fadeIn('fast').find('.cost').html(data.totalrecurringmonthly);
+            }
+
+            if (data.totalrecurringquarterly) {
+                jQuery('#recurringQuarterly').fadeIn('fast').find('.cost').html(data.totalrecurringquarterly);
+            }
+
+            if (data.totalrecurringsemiannually) {
+                jQuery('#recurringSemiAnnually').fadeIn('fast').find('.cost').html(data.totalrecurringsemiannually);
+            }
+
+            if (data.totalrecurringtriennially) {
+                jQuery('#recurringTriennially').fadeIn('fast').find('.cost').html(data.totalrecurringtriennially);
+            }
+
+            jQuery('#totalDueToday').html(data.total);
+        }
+    );
+    update.always(
+        function() {
+            loader.delay(500).fadeOut('slow').addClass('hidden').show();
+        }
+    );
+}
+
+function loadMoreSuggestions()
+{
+    var suggestions = jQuery('#domainSuggestions'),
+        suggestionCount;
+
+    for (suggestionCount = 1; suggestionCount <= 10; suggestionCount++) {
+        if (furtherSuggestions > 0) {
+            suggestions.find('li.domain-suggestion.hidden.clone:first').not().hide().removeClass('hidden').slideDown();
+            furtherSuggestions = suggestions.find('li.domain-suggestion.clone.hidden').length;
+        } else {
+            jQuery('div.more-suggestions').find('a').addClass('hidden').end().find('span.no-more').removeClass('hidden');
+            return;
+        }
+    }
+}
+
+function validate_captcha(form)
+{
+    var reCaptcha = jQuery('#g-recaptcha-response'),
+        reCaptchaContainer = jQuery('#google-recaptcha'),
+        captcha = jQuery('#inputCaptcha');
+
+    if (reCaptcha.length && !reCaptcha.val()) {
+        reCaptchaContainer.tooltip('show');
+        return false;
+    }
+
+    if (captcha.length && !captcha.val()) {
+        captcha.tooltip('show');
+        return false;
+    }
+
+    var validate = jQuery.post(
+        form.attr('action'),
+        form.serialize() + '&a=validateCaptcha',
+        'json'
+    );
+
+    validate.done(function(data) {
+        if (data.error) {
+            jQuery('#inputCaptcha').attr('data-original-title', data.error).tooltip('show');
+            if (captcha.length) {
+                jQuery('#inputCaptchaImage').replaceWith(
+                    '<img id="inputCaptchaImage" src="includes/verifyimage.php" align="middle" />'
+                );
+            }
+        } else {
+            jQuery('#captchaContainer').remove();
+            form.trigger('submit');
+        }
+    });
 }
 
 function catchEnter(e) {
